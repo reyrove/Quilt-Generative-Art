@@ -86,6 +86,7 @@
     .cover-sub { font-family: var(--serif); font-size: clamp(1.3rem, 1.9vw, 1.7rem); font-weight: 300; font-style: italic; line-height: 1.4; color: var(--text-dim); max-width: 500px; }
     .cover-desc { color: var(--text-dim); font-size: 13px; line-height: 1.8; max-width: 460px; }
     .cover-art { position: relative; aspect-ratio: 1; background: #000; border: 1px solid var(--line); overflow: hidden; max-width: 520px; margin-left: auto; width: 100%; }
+    
     .canvas-slot { position: absolute; inset: 0; overflow: hidden; }
     .canvas-slot canvas {
       display: block !important;
@@ -94,6 +95,7 @@
       width: 100% !important; height: 100% !important;
       max-width: 100% !important; max-height: 100% !important;
     }
+    
     .cover-foot { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; padding-top: 32px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-faint); }
     .cover-foot .k { display: block; color: var(--gold-soft); margin-bottom: 8px; }
     .cover-foot .v { color: var(--text-dim); letter-spacing: 0.1em; line-height: 1.7; }
@@ -708,21 +710,6 @@
 <script>
 // ============================================================
 // QUILT — GENERATIVE ROTATED BLOCKS
-//
-// Same seed → many surfaces:
-//   • Cover, Plate, Frame — same seed
-//   • All 4 surfaces (Print, Scarf, Textile, Wall) — same seed
-//   • Archive — 8 unique seeds
-//
-// Rectangular surfaces tile the square composition to fill.
-//
-// Generative engine (preserved from source):
-//   • HSB colour mode
-//   • Grid density 12–21 cells
-//   • 5% margin around canvas
-//   • Each cell holds a block, rotated to one of 4 quarter-turns
-//   • Blocks at 30–80% of cell size
-//   • 30% chance of a nested inner block, opposite hue
 // ============================================================
 
 const prefix = 'Quilt';
@@ -740,13 +727,9 @@ class SeededRandom {
 
 // ============================================================
 // SKETCH FACTORY
-// tile: { cols, rows } — repeat the square composition N times
 // ============================================================
-function makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }) {
+function makeSketch({ slotId, seedValue, isMaster, maxFrames }) {
   const stopAfter = maxFrames || Infinity;
-  const tileCols = (tile && tile.cols) || 1;
-  const tileRows = (tile && tile.rows) || 1;
-
   let canvasW = 0;
   let canvasH = 0;
   let frameCount = 0;
@@ -782,30 +765,16 @@ function makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }) {
         return;
       }
 
-      const tileW = canvasW / tileCols;
-      const tileH = canvasH / tileRows;
-      const tileSize = Math.min(tileW, tileH);
-
-      for (let ty = 0; ty < tileRows; ty++) {
-        for (let tx = 0; tx < tileCols; tx++) {
-          const ox = tx * tileW + (tileW - tileSize) / 2;
-          const oy = ty * tileH + (tileH - tileSize) / 2;
-
-          p.push();
-          p.translate(ox, oy);
-          drawQuilt(p, tileSize, seedValue, isMaster && tx === 0 && ty === 0);
-          p.pop();
-        }
-      }
-
+      // Directly draw the composition to fill the entire canvas exactly
+      drawQuilt(p, canvasW, canvasH, seedValue, isMaster);
       frameCount++;
     };
   };
 
-  // ---- Draw the quilt into a square of side `size` ----
-  function drawQuilt(p, size, seedValue, isMasterTile) {
+  // ---- Draw the quilt to fill the canvas ----
+  function drawQuilt(p, w, h, seedValue, isMasterTile) {
     const sr = new SeededRandom(seedValue);
-    const cs = size;
+    const maxDim = Math.max(w, h);
 
     // ---- Background ----
     const bgHue = sr.rand() * 360;
@@ -814,22 +783,27 @@ function makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }) {
     p.background(bgHue, bgSat, bgBri);
 
     // ---- Grid ----
-    const margin = cs * 0.05;
+    const margin = Math.min(w, h) * 0.05;
+    const drawW = w - 2 * margin;
+    const drawH = h - 2 * margin;
+    
     const gridSize = Math.floor(sr.rand() * 10 + 12); // 12–21
-    const cellSize = (cs - 2 * margin) / gridSize;
+    const cellW = drawW / gridSize;
+    const cellH = drawH / gridSize;
+    
     let blockCount = 0;
 
     for (let x = 0; x < gridSize; x++) {
       for (let y = 0; y < gridSize; y++) {
-        const posX = margin + x * cellSize;
-        const posY = margin + y * cellSize;
+        const posX = margin + x * cellW;
+        const posY = margin + y * cellH;
 
         const rotationType = Math.floor(sr.rand() * 4);
-        const boxSize = cellSize * (sr.rand() * 0.5 + 0.3);
+        const boxSize = Math.min(cellW, cellH) * (sr.rand() * 0.5 + 0.3);
         const boxColorHue = (bgHue + sr.rand() * 120 + 30) % 360;
 
         p.push();
-        p.translate(posX + cellSize / 2, posY + cellSize / 2);
+        p.translate(posX + cellW / 2, posY + cellH / 2);
 
         if (rotationType > 0) {
           p.rotate(p.HALF_PI * rotationType);
@@ -907,10 +881,10 @@ function attachVisibilityObserver(p5Instance, element) {
   obs.observe(element);
 }
 
-function createLiveP5({ slotId, seedValue, isMaster, maxFrames, tile, onCreated }) {
+function createLiveP5({ slotId, seedValue, isMaster, maxFrames, onCreated }) {
   whenSlotReady(slotId, (slot) => {
     slot.querySelectorAll('canvas').forEach(c => c.remove());
-    const inst = new p5(makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }), slot);
+    const inst = new p5(makeSketch({ slotId, seedValue, isMaster, maxFrames }), slot);
     inst._frozen = false;
     attachVisibilityObserver(inst, slot);
     if (onCreated) onCreated(inst);
@@ -926,7 +900,6 @@ function drawPlate() {
     seedValue: seed,
     isMaster: true,
     maxFrames: 2,
-    tile: { cols: 1, rows: 1 },
     onCreated: (inst) => { plateP5 = inst; }
   });
 }
@@ -940,7 +913,6 @@ function drawCover() {
     seedValue: seed,
     isMaster: false,
     maxFrames: 2,
-    tile: { cols: 1, rows: 1 },
     onCreated: (inst) => { coverP5 = inst; }
   });
 }
@@ -954,16 +926,15 @@ function drawFramedPlate() {
     seedValue: seed,
     isMaster: false,
     maxFrames: 2,
-    tile: { cols: 1, rows: 1 },
     onCreated: (inst) => { frameP5 = inst; }
   });
 }
 
 const surfaceDefs = [
-  { id: 'surfacePrint',   wrapId: 'wrap-surfacePrint',   tile: { cols: 1, rows: 1 } },
-  { id: 'surfaceScarf',   wrapId: 'wrap-surfaceScarf',   tile: { cols: 3, rows: 1 } },
-  { id: 'surfaceTextile', wrapId: 'wrap-surfaceTextile', tile: { cols: 2, rows: 2 } },
-  { id: 'surfaceWall',    wrapId: 'wrap-surfaceWall',    tile: { cols: 1, rows: 2 } }
+  { id: 'surfacePrint',   wrapId: 'wrap-surfacePrint' },
+  { id: 'surfaceScarf',   wrapId: 'wrap-surfaceScarf' },
+  { id: 'surfaceTextile', wrapId: 'wrap-surfaceTextile' },
+  { id: 'surfaceWall',    wrapId: 'wrap-surfaceWall' }
 ];
 
 function drawSurfaces() {
@@ -992,8 +963,7 @@ function drawSurfaces() {
           slotId: slot.id || (slot.id = def.id + '-slot'),
           seedValue: seed,
           isMaster: false,
-          maxFrames: 2,
-          tile: def.tile
+          maxFrames: 2
         }),
         slot
       );
@@ -1065,8 +1035,7 @@ function drawArchive() {
           slotId: 'archive-slot-' + i,
           seedValue: archiveSeeds[i],
           isMaster: false,
-          maxFrames: 2,
-          tile: { cols: 1, rows: 1 }
+          maxFrames: 2
         }),
         slot
       );
